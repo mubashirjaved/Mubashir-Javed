@@ -1,4 +1,3 @@
-import json
 import math
 import os
 import queue
@@ -7,11 +6,11 @@ import shutil
 import subprocess
 import tempfile
 import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -40,6 +39,8 @@ OUTPUT_LANGUAGES = [
 FILLER_WORDS = [
     "uh", "um", "hmm", "erm", "ah", "like", "you know", "i mean",
 ]
+_FILLER_PATTERN = re.compile(r"\b(" + "|".join(re.escape(w) for w in FILLER_WORDS) + r")\b", re.IGNORECASE)
+_MODEL_CACHE = {}
 
 
 @dataclass
@@ -172,8 +173,7 @@ class AudioPreprocessor:
 class TextPostProcessor:
     @staticmethod
     def cleanup_text(text: str) -> str:
-        pattern = r"\b(" + "|".join(re.escape(w) for w in FILLER_WORDS) + r")\b"
-        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+        text = _FILLER_PATTERN.sub("", text)
         text = re.sub(r"\b(\w+)(\s+\1\b)+", r"\1", text, flags=re.IGNORECASE)
         text = re.sub(r"\s+", " ", text).strip()
         return text
@@ -183,10 +183,14 @@ class WhisperEngine:
     def __init__(self, profile: HardwareProfile, model_name: str):
         self.profile = profile
         self.model_name = model_name
-        self.model = whisper.load_model(model_name, device=profile.device)
+        cache_key = (model_name, profile.device)
+        if cache_key not in _MODEL_CACHE:
+            _MODEL_CACHE[cache_key] = whisper.load_model(model_name, device=profile.device)
+        self.model = _MODEL_CACHE[cache_key]
 
-    def detect_language(self, audio_path: str) -> Tuple[str, float]:
-        audio = whisper.load_audio(audio_path)
+    def detect_language(self, audio: Union[str, Path, np.ndarray]) -> Tuple[str, float]:
+        if isinstance(audio, (str, Path)):
+            audio = whisper.load_audio(str(audio))
         audio = whisper.pad_or_trim(audio)
         mel = whisper.log_mel_spectrogram(audio).to(self.model.device)
         _, probs = self.model.detect_language(mel)
@@ -195,7 +199,8 @@ class WhisperEngine:
 
     def transcribe_chunks(
         self,
-        chunks: List[str],
+        audio: Union[str, Path, np.ndarray],
+        chunk_seconds: int,
         language: Optional[str],
         timestamps: bool,
         word_timestamps: bool,
@@ -205,13 +210,28 @@ class WhisperEngine:
         all_segments = []
         full_text = []
 
-        for idx, chunk in enumerate(chunks):
+        if isinstance(audio, (str, Path)):
+            audio = whisper.load_audio(str(audio))
+
+        if len(audio) == 0:
+            return {"text": "", "segments": []}
+
+        sample_rate = whisper.audio.SAMPLE_RATE
+        chunk_size = chunk_seconds * sample_rate
+        num_chunks = math.ceil(len(audio) / chunk_size)
+
+        for idx in range(num_chunks):
             if stop_event.is_set():
                 raise RuntimeError("Transcription stopped by user.")
 
-            progress_cb(idx / len(chunks), f"Transcribing chunk {idx + 1}/{len(chunks)}")
+            progress_cb(idx / num_chunks, f"Transcribing chunk {idx + 1}/{num_chunks}")
+
+            start_sample = idx * chunk_size
+            end_sample = min((idx + 1) * chunk_size, len(audio))
+            chunk_data = audio[start_sample:end_sample]
+
             result = self.model.transcribe(
-                chunk,
+                chunk_data,
                 language=language,
                 fp16=self.profile.fp16,
                 task="transcribe",
@@ -219,7 +239,7 @@ class WhisperEngine:
                 verbose=False,
                 condition_on_previous_text=False,
             )
-            chunk_offset = idx * 180
+            chunk_offset = idx * chunk_seconds
             for seg in result.get("segments", []):
                 seg = dict(seg)
                 seg["start"] = seg.get("start", 0.0) + chunk_offset
@@ -412,8 +432,11 @@ class TranscriberGUI:
                 self._set_progress(0.05, "Preprocessing audio")
                 AudioPreprocessor.preprocess_to_wav(input_file, preprocessed, self.silence_var.get())
 
-                self._set_progress(0.12, "Detecting language")
-                detected_lang, lang_prob = engine.detect_language(preprocessed)
+                self._set_progress(0.12, "Loading audio into memory")
+                full_audio = whisper.load_audio(preprocessed)
+
+                self._set_progress(0.18, "Detecting language")
+                detected_lang, lang_prob = engine.detect_language(full_audio)
                 self.detected_lang_var.set(f"{detected_lang} ({lang_prob:.2f})")
                 self._log(f"Detected language={detected_lang} confidence={lang_prob:.2f}")
 
@@ -421,17 +444,14 @@ class TranscriberGUI:
                 if language is None:
                     language = detected_lang
 
-                self._set_progress(0.2, "Chunking")
-                chunks = AudioPreprocessor.chunk_audio(preprocessed, self.chunk_var.get(), td)
-                self._log(f"Prepared {len(chunks)} chunk(s)")
-
                 result = engine.transcribe_chunks(
-                    chunks=chunks,
+                    audio=full_audio,
+                    chunk_seconds=self.chunk_var.get(),
                     language=language,
                     timestamps=timestamps,
                     word_timestamps=word_ts,
                     stop_event=self.stop_event,
-                    progress_cb=lambda p, msg: self._set_progress(0.2 + 0.75 * p, msg),
+                    progress_cb=lambda p, msg: self._set_progress(0.25 + 0.7 * p, msg),
                 )
 
             text = result.get("text", "")

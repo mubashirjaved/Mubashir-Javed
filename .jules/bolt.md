@@ -1,0 +1,3 @@
+## 2025-02-22 - [Optimized Audio Pipeline & Model Caching]
+**Learning:** Redundant disk I/O and multiple subprocess calls (ffmpeg) significantly slow down Whisper transcription in a GUI context. Transitioning to an in-memory processing pipeline (loading once into a NumPy array and slicing in memory) drastically reduces overhead. Additionally, caching the loaded model at the module level avoids expensive reloads between runs.
+**Action:** Always consider if files being chunked or processed in stages can be kept in memory to avoid redundant I/O, especially when the target hardware has sufficient RAM (e.g., 32GB as in this case).
