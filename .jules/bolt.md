@@ -1,0 +1,3 @@
+## 2025-05-15 - [In-Memory Audio Pipeline & Model Caching]
+**Learning:** Redundant FFmpeg calls and disk I/O for temporary WAV files accounted for a significant portion of preprocessing time (~200ms for 1 min audio). Moving to a full in-memory pipeline using FFmpeg pipes and NumPy slices reduced FFmpeg calls from 3 to 1 and eliminated disk latency. Additionally, class-level model caching in WhisperEngine eliminates multi-second overhead for repeated transcription tasks.
+**Action:** Always prefer streaming audio directly to NumPy via subprocess pipes to avoid temporary file overhead in processing-heavy applications. Use class-level caches for heavy model loaders (Whisper, Torch, etc.) in persistent GUI sessions.
