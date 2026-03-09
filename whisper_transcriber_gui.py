@@ -1,13 +1,9 @@
-import json
 import math
 import os
 import queue
 import re
-import shutil
 import subprocess
-import tempfile
 import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -17,6 +13,13 @@ from tkinter import filedialog, messagebox, ttk
 
 import torch
 import whisper
+import numpy as np
+
+try:
+    from static_ffmpeg import add_paths
+    add_paths()
+except ImportError:
+    pass
 
 try:
     from deep_translator import GoogleTranslator
@@ -70,23 +73,25 @@ class HardwareOptimizer:
             amd_found = True
             notes.append(f"ROCm/HIP runtime detected: {torch.version.hip}")
 
-        if shutil.which("rocminfo"):
-            try:
-                out = subprocess.check_output(["rocminfo"], text=True, stderr=subprocess.STDOUT, timeout=4)
-                if "gfx" in out.lower() or "amd" in out.lower():
-                    amd_found = True
-                    notes.append("rocminfo indicates AMD GPU support.")
-            except Exception as exc:
-                notes.append(f"rocminfo probe failed: {exc}")
+        try:
+            out = subprocess.check_output(["rocminfo"], text=True, stderr=subprocess.STDOUT, timeout=4)
+            if "gfx" in out.lower() or "amd" in out.lower():
+                amd_found = True
+                notes.append("rocminfo indicates AMD GPU support.")
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            notes.append(f"rocminfo probe failed: {exc}")
 
-        if shutil.which("clinfo"):
-            try:
-                out = subprocess.check_output(["clinfo"], text=True, stderr=subprocess.STDOUT, timeout=4)
-                if "amd" in out.lower() or "radeon" in out.lower():
-                    amd_found = True
-                    notes.append("OpenCL reports AMD/Radeon device.")
-            except Exception as exc:
-                notes.append(f"clinfo probe failed: {exc}")
+        try:
+            out = subprocess.check_output(["clinfo"], text=True, stderr=subprocess.STDOUT, timeout=4)
+            if "amd" in out.lower() or "radeon" in out.lower():
+                amd_found = True
+                notes.append("OpenCL reports AMD/Radeon device.")
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            notes.append(f"clinfo probe failed: {exc}")
 
         return amd_found, notes
 
@@ -128,65 +133,59 @@ class HardwareOptimizer:
 
 class AudioPreprocessor:
     @staticmethod
-    def ffprobe_duration(path: str) -> float:
-        cmd = [
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", path,
-        ]
-        out = subprocess.check_output(cmd, text=True).strip()
-        return float(out)
-
-    @staticmethod
-    def preprocess_to_wav(input_path: str, output_path: str, smart_silence: bool) -> None:
+    def preprocess_to_memory(input_path: str, smart_silence: bool) -> np.ndarray:
+        """Loads audio directly into a NumPy array using FFmpeg pipes."""
         silence_filter = ["-af", "silenceremove=stop_periods=-1:stop_duration=0.6:stop_threshold=-45dB"] if smart_silence else []
         cmd = [
-            "ffmpeg", "-y", "-hwaccel", "auto", "-i", input_path,
+            "ffmpeg", "-i", input_path,
+            "-f", "s16le", "-acodec", "pcm_s16le",
             "-ac", "1", "-ar", "16000",
-            *silence_filter,
-            output_path,
+            *silence_filter, "-"
         ]
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out = subprocess.run(cmd, capture_output=True, check=True).stdout
+        return np.frombuffer(out, dtype=np.int16).astype(np.float32) / 32768.0
 
     @staticmethod
-    def chunk_audio(preprocessed_wav: str, chunk_seconds: int, temp_dir: str) -> List[str]:
-        duration = AudioPreprocessor.ffprobe_duration(preprocessed_wav)
-        if duration <= chunk_seconds:
-            return [preprocessed_wav]
-
-        chunks = []
-        start = 0.0
-        idx = 0
-        while start < duration:
-            chunk_path = str(Path(temp_dir) / f"chunk_{idx:04d}.wav")
-            cmd = [
-                "ffmpeg", "-y", "-ss", str(start), "-t", str(chunk_seconds), "-i", preprocessed_wav,
-                "-ac", "1", "-ar", "16000", chunk_path,
-            ]
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            chunks.append(chunk_path)
-            start += chunk_seconds
-            idx += 1
-        return chunks
+    def chunk_audio_in_memory(audio: np.ndarray, chunk_seconds: int) -> List[np.ndarray]:
+        """Slices a NumPy audio array into chunks of specified duration."""
+        samples_per_chunk = chunk_seconds * 16000
+        return [audio[i:i + samples_per_chunk] for i in range(0, len(audio), samples_per_chunk)]
 
 
 class TextPostProcessor:
+    # Pre-compile patterns for performance
+    FILLER_PATTERN = re.compile(
+        r"\b(" + "|".join(re.escape(w) for w in FILLER_WORDS) + r")\b",
+        flags=re.IGNORECASE
+    )
+    REPETITION_PATTERN = re.compile(r"\b(\w+)(\s+\1\b)+", flags=re.IGNORECASE)
+    WHITESPACE_PATTERN = re.compile(r"\s+")
+
     @staticmethod
     def cleanup_text(text: str) -> str:
-        pattern = r"\b(" + "|".join(re.escape(w) for w in FILLER_WORDS) + r")\b"
-        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
-        text = re.sub(r"\b(\w+)(\s+\1\b)+", r"\1", text, flags=re.IGNORECASE)
-        text = re.sub(r"\s+", " ", text).strip()
+        """Removes filler words, repetitions and collapses whitespace."""
+        text = TextPostProcessor.FILLER_PATTERN.sub("", text)
+        text = TextPostProcessor.REPETITION_PATTERN.sub(r"\1", text)
+        text = TextPostProcessor.WHITESPACE_PATTERN.sub(" ", text).strip()
         return text
 
 
 class WhisperEngine:
+    _model_cache: Dict[Tuple[str, str], object] = {}
+
     def __init__(self, profile: HardwareProfile, model_name: str):
         self.profile = profile
         self.model_name = model_name
-        self.model = whisper.load_model(model_name, device=profile.device)
 
-    def detect_language(self, audio_path: str) -> Tuple[str, float]:
-        audio = whisper.load_audio(audio_path)
+        cache_key = (model_name, profile.device)
+        if cache_key not in WhisperEngine._model_cache:
+            self.model = whisper.load_model(model_name, device=profile.device)
+            WhisperEngine._model_cache[cache_key] = self.model
+        else:
+            self.model = WhisperEngine._model_cache[cache_key]
+
+    def detect_language(self, audio: np.ndarray) -> Tuple[str, float]:
+        """Detects language from a NumPy audio array."""
         audio = whisper.pad_or_trim(audio)
         mel = whisper.log_mel_spectrogram(audio).to(self.model.device)
         _, probs = self.model.detect_language(mel)
@@ -195,13 +194,15 @@ class WhisperEngine:
 
     def transcribe_chunks(
         self,
-        chunks: List[str],
+        chunks: List[np.ndarray],
         language: Optional[str],
         timestamps: bool,
         word_timestamps: bool,
         stop_event: threading.Event,
         progress_cb: Callable[[float, str], None],
+        chunk_seconds: int = 180,
     ) -> Dict:
+        """Transcribes NumPy audio chunks and merges the results."""
         all_segments = []
         full_text = []
 
@@ -219,7 +220,7 @@ class WhisperEngine:
                 verbose=False,
                 condition_on_previous_text=False,
             )
-            chunk_offset = idx * 180
+            chunk_offset = idx * chunk_seconds
             for seg in result.get("segments", []):
                 seg = dict(seg)
                 seg["start"] = seg.get("start", 0.0) + chunk_offset
@@ -398,6 +399,7 @@ class TranscriberGUI:
         timestamps = self.timestamps_var.get()
         word_ts = self.word_timestamps_var.get()
         thread_limit = self.thread_var.get()
+        chunk_seconds = self.chunk_var.get()
 
         try:
             profile = HardwareOptimizer.build_profile(thread_limit)
@@ -407,32 +409,31 @@ class TranscriberGUI:
 
             engine = WhisperEngine(profile, self.model_var.get())
 
-            with tempfile.TemporaryDirectory(prefix="whisper_gui_") as td:
-                preprocessed = str(Path(td) / "preprocessed.wav")
-                self._set_progress(0.05, "Preprocessing audio")
-                AudioPreprocessor.preprocess_to_wav(input_file, preprocessed, self.silence_var.get())
+            self._set_progress(0.05, "Preprocessing audio to memory")
+            audio = AudioPreprocessor.preprocess_to_memory(input_file, self.silence_var.get())
 
-                self._set_progress(0.12, "Detecting language")
-                detected_lang, lang_prob = engine.detect_language(preprocessed)
-                self.detected_lang_var.set(f"{detected_lang} ({lang_prob:.2f})")
-                self._log(f"Detected language={detected_lang} confidence={lang_prob:.2f}")
+            self._set_progress(0.12, "Detecting language")
+            detected_lang, lang_prob = engine.detect_language(audio)
+            self.detected_lang_var.set(f"{detected_lang} ({lang_prob:.2f})")
+            self._log(f"Detected language={detected_lang} confidence={lang_prob:.2f}")
 
-                language = None if self.input_lang_override_var.get() == "auto" else self.input_lang_override_var.get()
-                if language is None:
-                    language = detected_lang
+            language = None if self.input_lang_override_var.get() == "auto" else self.input_lang_override_var.get()
+            if language is None:
+                language = detected_lang
 
-                self._set_progress(0.2, "Chunking")
-                chunks = AudioPreprocessor.chunk_audio(preprocessed, self.chunk_var.get(), td)
-                self._log(f"Prepared {len(chunks)} chunk(s)")
+            self._set_progress(0.2, "Chunking in memory")
+            chunks = AudioPreprocessor.chunk_audio_in_memory(audio, chunk_seconds)
+            self._log(f"Prepared {len(chunks)} chunk(s)")
 
-                result = engine.transcribe_chunks(
-                    chunks=chunks,
-                    language=language,
-                    timestamps=timestamps,
-                    word_timestamps=word_ts,
-                    stop_event=self.stop_event,
-                    progress_cb=lambda p, msg: self._set_progress(0.2 + 0.75 * p, msg),
-                )
+            result = engine.transcribe_chunks(
+                chunks=chunks,
+                language=language,
+                timestamps=timestamps,
+                word_timestamps=word_ts,
+                stop_event=self.stop_event,
+                progress_cb=lambda p, msg: self._set_progress(0.2 + 0.75 * p, msg),
+                chunk_seconds=chunk_seconds,
+            )
 
             text = result.get("text", "")
             if self.cleanup_var.get():
