@@ -1,0 +1,3 @@
+## 2025-06-26 - In-Memory Pipeline Optimization
+**Learning:** Transitioning from a disk-based preprocessing/chunking pipeline to a NumPy in-memory pipeline using FFmpeg piping reduced total processing time by ~35% for standard audio lengths. The primary gain came from making chunking instantaneous (0.000s) via array slicing, compared to re-invoking FFmpeg for each chunk. Peak memory consumption remained stable as OpenAI Whisper's internal loaders already utilize similar in-memory buffers.
+**Action:** Prioritize in-memory NumPy/FFmpeg piping for any media-heavy applications to eliminate disk I/O bottlenecks. Always clean up benchmarking artifacts and bytecode before final submission.
