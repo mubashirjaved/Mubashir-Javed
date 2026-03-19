@@ -1,0 +1,3 @@
+## 2025-06-25 - [In-memory Pipeline Optimization]
+**Learning:** Transitioning from file-based preprocessing to an in-memory NumPy pipeline significantly reduces transcription overhead by eliminating redundant FFmpeg calls and disk I/O. A 60-second audio file showed a measurable speedup. However, ensure that segment and word timestamps are correctly adjusted for global offsets when transcribing in chunks.
+**Action:** Always prefer piping raw PCM data directly from FFmpeg to NumPy for Whisper tasks. Always verify that all timestamp metadata (segments and words) are correctly shifted when processing in chunks.
