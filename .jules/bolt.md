@@ -1,0 +1,3 @@
+## 2025-05-15 - In-Memory Audio Pipeline Optimization
+**Learning:** Moving from a file-based preprocessing and chunking pipeline to an in-memory `numpy` array approach eliminates significant disk I/O overhead. For a 60s audio file, this resulted in a ~66% speedup in the preprocessing phase. Additionally, using `subprocess.run` with `stdout=PIPE` to read raw PCM data requires redirecting `stderr` to `DEVNULL` (or carefully handling it) to avoid buffer deadlocks on large streams.
+**Action:** Always prefer piping raw data between tools like FFmpeg and Python when handling media to minimize latency and temporary file management.
