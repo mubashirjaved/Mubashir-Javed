@@ -1,0 +1,3 @@
+## 2026-03-30 - In-Memory Pipeline Optimization
+**Learning:** Transitioning from a file-based preprocessing and chunking pipeline to an in-memory NumPy-based one eliminates redundant disk I/O and FFmpeg process overhead. While Whisper's `load_audio` internally uses FFmpeg pipes, the manual implementation of an in-memory pipeline allows for seamless integration of custom FFmpeg filters (like `silenceremove`) and O(1) chunking via NumPy slicing, significantly improving overall pipeline efficiency.
+**Action:** Prioritize in-memory data processing for media pipelines to reduce latency and temporary file management overhead, especially when multiple processing stages are involved.
