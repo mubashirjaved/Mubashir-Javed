@@ -1,0 +1,3 @@
+## 2026-04-01 - Optimized in-memory audio pipeline
+**Learning:** In-memory pipelines for audio transcription using NumPy slicing can reduce preparation time (preprocessing + chunking) by over 50% compared to file-based FFmpeg calls, while eliminating disk I/O and temporary file management. Additionally, hardcoded chunk offsets (like 180s) can lead to transcript inaccuracies if the user changes the chunking parameter; offsets must be calculated dynamically based on the actual chunk size.
+**Action:** Always prefer direct NumPy array handling and piping for media data when the hardware profile (e.g., 32GB RAM) permits, and ensure all segment-level metadata is recalculated relative to the dynamic chunking offset.
