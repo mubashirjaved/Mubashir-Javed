@@ -1,0 +1,3 @@
+## 2026-04-18 - [In-memory audio pipeline]
+**Learning:** Moving from file-based preprocessing and chunking to a pure in-memory NumPy pipeline significantly reduces overhead by eliminating redundant FFmpeg calls and disk I/O. For a 60-second audio file, preprocessing and chunking time dropped from ~0.24s to ~0.17s. On a 10-minute file, it went from ~1.57s to ~1.33s.
+**Action:** Use `subprocess.run` with FFmpeg to pipe raw PCM `s16le` data directly to `stdout`, then load into NumPy. Whisper's `detect_language` and `transcribe` can accept these pre-loaded arrays directly, bypassing its own `whisper.load_audio` file reads.
