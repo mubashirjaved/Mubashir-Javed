@@ -1,3 +1,4 @@
 openai-whisper
+numpy
 torch
 deep-translator
