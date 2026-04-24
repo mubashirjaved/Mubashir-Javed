@@ -1,0 +1,3 @@
+## 2026-04-24 - In-Memory Audio Pipeline Optimization
+**Learning:** Moving from disk-based temporary WAV files to an in-memory NumPy pipeline significantly reduces I/O overhead and latency. FFmpeg can pipe raw float32 PCM data directly to stdout, which `np.frombuffer` can consume instantly. Whisper's `detect_language` and `transcribe` methods can accept these NumPy arrays directly, avoiding redundant disk reads.
+**Action:** Always prefer piping raw PCM data from FFmpeg to memory for audio processing tasks involving multiple stages (preprocessing, chunking, transcription) to eliminate disk bottlenecks.
