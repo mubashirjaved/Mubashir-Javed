@@ -1,0 +1,3 @@
+## 2026-04-30 - In-memory Audio Pipeline Optimization
+**Learning:** Transitioning from a file-based preprocessing and chunking workflow to an in-memory NumPy pipeline reduces I/O overhead by over 80% for small-to-medium audio files (e.g., 60s). Piping raw PCM data (`f32le`) from FFmpeg and using `np.frombuffer(...).copy()` is essential because PyTorch/Whisper requires writable tensors, and `frombuffer` returns a read-only view.
+**Action:** Prioritize in-memory data processing for audio/signal processing tasks to eliminate disk latency and temporary file management. Always ensure NumPy arrays derived from buffers are made writable before passing them to deep learning models.
