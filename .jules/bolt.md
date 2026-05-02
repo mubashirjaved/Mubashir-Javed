@@ -1,0 +1,3 @@
+## 2026-05-02 - In-memory Audio Pipeline Optimization
+**Learning:** Moving from a disk-based FFmpeg chunking pipeline to an in-memory NumPy slicing pipeline provided a ~1.69x speedup for a 10-minute audio file. Crucially, capturing raw float32 PCM data (`f32le`) from FFmpeg's `stdout` and loading it via `np.frombuffer().copy()` is the most efficient way to bridge FFmpeg and Whisper/Torch without temporary files. Using `.copy()` is necessary because `frombuffer` returns a read-only view which can cause issues with downstream PyTorch operations.
+**Action:** Prioritize in-memory piping for multi-stage media processing tasks to eliminate I/O bottlenecks.
