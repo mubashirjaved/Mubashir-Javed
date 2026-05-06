@@ -1,0 +1,3 @@
+## 2026-05-06 - [In-memory Audio Pipeline]
+**Learning:** Slicing memory-resident NumPy arrays for chunked transcription is significantly more efficient than disk-based FFmpeg chunking, reducing total processing time by ~1.7x - 2.6x. Transitive dependencies (like `numpy` from `openai-whisper`) should be relied upon when possible to avoid unnecessary `requirements.txt` changes, and strict hygiene (removing `__pycache__` and artifacts) is critical for PR approval.
+**Action:** Always verify if a required package is already a transitive dependency before adding it to `requirements.txt`. Always clean up temporary benchmark files and `__pycache__` before final submission.
