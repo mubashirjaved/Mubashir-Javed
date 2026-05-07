@@ -1,0 +1,3 @@
+## 2026-05-07 - [In-memory audio processing pipeline]
+**Learning:** Transitioning from a file-based preprocessing and chunking workflow to an in-memory NumPy pipeline significantly reduces disk I/O overhead and redundant FFmpeg process invocations. For a 10-minute audio file, this optimization yielded a ~1.33x speedup in the preprocessing and setup phase.
+**Action:** When handling streamable media data, prefer piping raw data to memory (e.g., using FFmpeg's `f32le` format to NumPy arrays) instead of using intermediate temporary files, especially when subsequent processing (like Whisper) can accept memory buffers directly.
