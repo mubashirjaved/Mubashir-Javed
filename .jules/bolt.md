@@ -1,0 +1,3 @@
+## 2026-05-20 - In-memory Audio Processing Pipeline
+**Learning:** Moving from a disk-based workflow to an in-memory NumPy pipeline significantly reduces I/O overhead and makes chunking operations virtually instantaneous. Whisper's `detect_language` and `transcribe` methods can accept NumPy arrays directly, which avoids the need for temporary WAV files entirely. Additionally, a hardcoded 180s offset was discovered in the original implementation, which was a significant bug for variable chunk sizes.
+**Action:** Always check if the underlying ML libraries (like Whisper/PyTorch) can accept raw NumPy buffers or tensors before resorting to temporary files on disk. Use FFmpeg pipes to stream data directly into memory.
