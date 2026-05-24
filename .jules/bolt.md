@@ -1,0 +1,3 @@
+## 2025-05-24 - In-Memory Audio Pipeline Optimization
+**Learning:** Redundant disk I/O during audio preprocessing and chunking is a major bottleneck in Whisper-based applications. Piping FFmpeg output directly to a NumPy array via `f32le` format eliminates the need for temporary WAV files and significantly speeds up the pipeline. Additionally, Whisper's `transcribe` and `detect_language` methods can accept NumPy arrays directly, allowing for efficient in-memory chunking via slicing.
+**Action:** Always prefer in-memory NumPy processing for audio pipelines when using libraries like Whisper or PyTorch, avoiding intermediate filesystem writes unless memory constraints are extreme.
