@@ -1,0 +1,3 @@
+## 2026-05-28 - In-memory Audio Processing Pipeline
+**Learning:** Transitioning from a disk-based preprocessing/chunking pipeline to an in-memory NumPy-based pipeline provides significant performance gains by eliminating redundant Disk I/O and FFmpeg subprocess spawns. Additionally, passing raw PCM data directly to Whisper's `transcribe` and `detect_language` methods is more efficient than loading from temporary WAV files.
+**Action:** Prioritize in-memory processing with NumPy and FFmpeg pipes for audio processing tasks in this application. Always ensure that timestamp offsets are calculated dynamically based on chunk size rather than using hardcoded values.
