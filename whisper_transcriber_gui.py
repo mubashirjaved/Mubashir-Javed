@@ -1,13 +1,15 @@
-import json
+"""
+Whisper Audio Transcriber GUI (Hardware-Optimized).
+Production-ready Tkinter GUI for OpenAI Whisper.
+"""
+
 import math
 import os
 import queue
 import re
 import shutil
 import subprocess
-import tempfile
 import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -15,13 +17,15 @@ from typing import Callable, Dict, List, Optional, Tuple
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+# pylint: disable=import-error
+import numpy as np
 import torch
 import whisper
 
 try:
     from deep_translator import GoogleTranslator
-except Exception:
-    GoogleTranslator = None
+except Exception:  # pylint: disable=broad-exception-caught
+    GoogleTranslator = None  # pylint: disable=invalid-name
 
 
 SUPPORTED_MODELS = ["tiny", "base", "small", "medium", "large"]
@@ -44,6 +48,7 @@ FILLER_WORDS = [
 
 @dataclass
 class HardwareProfile:
+    """Stores hardware capabilities and settings."""
     device: str
     fp16: bool
     torch_threads: int
@@ -52,8 +57,11 @@ class HardwareProfile:
 
 
 class HardwareOptimizer:
+    """Optimizes execution based on detected hardware."""
+
     @staticmethod
     def detect_amd_gpu() -> Tuple[bool, List[str]]:
+        """Probes for AMD GPU via CUDA/HIP, ROCm, or OpenCL."""
         notes = []
         amd_found = False
 
@@ -72,26 +80,31 @@ class HardwareOptimizer:
 
         if shutil.which("rocminfo"):
             try:
-                out = subprocess.check_output(["rocminfo"], text=True, stderr=subprocess.STDOUT, timeout=4)
+                out = subprocess.check_output(
+                    ["rocminfo"], text=True, stderr=subprocess.STDOUT, timeout=4
+                )
                 if "gfx" in out.lower() or "amd" in out.lower():
                     amd_found = True
                     notes.append("rocminfo indicates AMD GPU support.")
-            except Exception as exc:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 notes.append(f"rocminfo probe failed: {exc}")
 
         if shutil.which("clinfo"):
             try:
-                out = subprocess.check_output(["clinfo"], text=True, stderr=subprocess.STDOUT, timeout=4)
+                out = subprocess.check_output(
+                    ["clinfo"], text=True, stderr=subprocess.STDOUT, timeout=4
+                )
                 if "amd" in out.lower() or "radeon" in out.lower():
                     amd_found = True
                     notes.append("OpenCL reports AMD/Radeon device.")
-            except Exception as exc:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
                 notes.append(f"clinfo probe failed: {exc}")
 
         return amd_found, notes
 
     @staticmethod
     def recommend_model(cpu_threads: int, amd_gpu: bool) -> str:
+        """Suggests a model based on hardware resources."""
         if amd_gpu and torch.cuda.is_available():
             return "small"
         if cpu_threads <= 4:
@@ -102,6 +115,7 @@ class HardwareOptimizer:
 
     @staticmethod
     def build_profile(thread_limit: Optional[int] = None) -> HardwareProfile:
+        """Builds a hardware profile for execution."""
         cpu_count = os.cpu_count() or 4
         threads = min(thread_limit or cpu_count, cpu_count)
         torch.set_num_threads(threads)
@@ -115,7 +129,7 @@ class HardwareOptimizer:
         if not use_cuda:
             notes.append("Running in CPU mode with fp16=False for stability.")
         elif amd_gpu and not getattr(torch.version, "hip", None):
-            notes.append("AMD GPU found but native Whisper CUDA path may be unavailable; using hybrid/CPU-safe path.")
+            notes.append("AMD GPU found but native Whisper CUDA path may be unavailable.")
 
         return HardwareProfile(
             device=device,
@@ -127,51 +141,34 @@ class HardwareOptimizer:
 
 
 class AudioPreprocessor:
-    @staticmethod
-    def ffprobe_duration(path: str) -> float:
-        cmd = [
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", path,
-        ]
-        out = subprocess.check_output(cmd, text=True).strip()
-        return float(out)
+    """Handles audio preprocessing using FFmpeg."""
+    # pylint: disable=too-few-public-methods
 
     @staticmethod
-    def preprocess_to_wav(input_path: str, output_path: str, smart_silence: bool) -> None:
-        silence_filter = ["-af", "silenceremove=stop_periods=-1:stop_duration=0.6:stop_threshold=-45dB"] if smart_silence else []
+    def preprocess_to_memory(input_path: str, smart_silence: bool) -> np.ndarray:
+        """Preprocesses audio to an in-memory NumPy array."""
+        silence_filter = [
+            "-af", "silenceremove=stop_periods=-1:stop_duration=0.6:stop_threshold=-45dB"
+        ] if smart_silence else []
         cmd = [
             "ffmpeg", "-y", "-hwaccel", "auto", "-i", input_path,
-            "-ac", "1", "-ar", "16000",
+            "-ac", "1", "-ar", "16000", "-f", "f32le",
             *silence_filter,
-            output_path,
+            "-",
         ]
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-    @staticmethod
-    def chunk_audio(preprocessed_wav: str, chunk_seconds: int, temp_dir: str) -> List[str]:
-        duration = AudioPreprocessor.ffprobe_duration(preprocessed_wav)
-        if duration <= chunk_seconds:
-            return [preprocessed_wav]
-
-        chunks = []
-        start = 0.0
-        idx = 0
-        while start < duration:
-            chunk_path = str(Path(temp_dir) / f"chunk_{idx:04d}.wav")
-            cmd = [
-                "ffmpeg", "-y", "-ss", str(start), "-t", str(chunk_seconds), "-i", preprocessed_wav,
-                "-ac", "1", "-ar", "16000", chunk_path,
-            ]
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            chunks.append(chunk_path)
-            start += chunk_seconds
-            idx += 1
-        return chunks
+        out = subprocess.run(
+            cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        ).stdout
+        return np.frombuffer(out, dtype=np.float32).copy()
 
 
 class TextPostProcessor:
+    """Performs basic text cleanup and filler word removal."""
+    # pylint: disable=too-few-public-methods
+
     @staticmethod
     def cleanup_text(text: str) -> str:
+        """Cleans up text by removing filler words and repetitions."""
         pattern = r"\b(" + "|".join(re.escape(w) for w in FILLER_WORDS) + r")\b"
         text = re.sub(pattern, "", text, flags=re.IGNORECASE)
         text = re.sub(r"\b(\w+)(\s+\1\b)+", r"\1", text, flags=re.IGNORECASE)
@@ -180,38 +177,53 @@ class TextPostProcessor:
 
 
 class WhisperEngine:
+    """Wraps Whisper model for transcription and language detection."""
+
     def __init__(self, profile: HardwareProfile, model_name: str):
         self.profile = profile
         self.model_name = model_name
         self.model = whisper.load_model(model_name, device=profile.device)
 
-    def detect_language(self, audio_path: str) -> Tuple[str, float]:
-        audio = whisper.load_audio(audio_path)
+    def detect_language(self, audio: np.ndarray) -> Tuple[str, float]:
+        """Detects the spoken language from audio."""
         audio = whisper.pad_or_trim(audio)
         mel = whisper.log_mel_spectrogram(audio).to(self.model.device)
         _, probs = self.model.detect_language(mel)
         lang, confidence = max(probs.items(), key=lambda item: item[1])
         return lang, confidence
 
+    # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     def transcribe_chunks(
         self,
-        chunks: List[str],
+        audio: np.ndarray,
+        chunk_seconds: int,
         language: Optional[str],
         timestamps: bool,
         word_timestamps: bool,
         stop_event: threading.Event,
         progress_cb: Callable[[float, str], None],
     ) -> Dict:
+        """Transcribes audio in chunks to optimize memory and speed."""
         all_segments = []
         full_text = []
 
-        for idx, chunk in enumerate(chunks):
+        sample_rate = 16000
+        chunk_samples = chunk_seconds * sample_rate
+        total_samples = len(audio)
+        num_chunks = math.ceil(total_samples / chunk_samples) if total_samples > 0 else 1
+
+        for idx in range(num_chunks):
             if stop_event.is_set():
                 raise RuntimeError("Transcription stopped by user.")
 
-            progress_cb(idx / len(chunks), f"Transcribing chunk {idx + 1}/{len(chunks)}")
+            progress_cb(idx / num_chunks, f"Transcribing chunk {idx + 1}/{num_chunks}")
+
+            start_sample = idx * chunk_samples
+            end_sample = min((idx + 1) * chunk_samples, total_samples)
+            chunk_data = audio[start_sample:end_sample]
+
             result = self.model.transcribe(
-                chunk,
+                chunk_data,
                 language=language,
                 fp16=self.profile.fp16,
                 task="transcribe",
@@ -219,7 +231,7 @@ class WhisperEngine:
                 verbose=False,
                 condition_on_previous_text=False,
             )
-            chunk_offset = idx * 180
+            chunk_offset = idx * chunk_seconds
             for seg in result.get("segments", []):
                 seg = dict(seg)
                 seg["start"] = seg.get("start", 0.0) + chunk_offset
@@ -235,6 +247,7 @@ class WhisperEngine:
 
 
 def format_srt(segments: List[Dict]) -> str:
+    """Formats transcription segments into SRT format."""
     def ts(sec: float) -> str:
         ms = int((sec - int(sec)) * 1000)
         h = int(sec // 3600)
@@ -252,6 +265,9 @@ def format_srt(segments: List[Dict]) -> str:
 
 
 class TranscriberGUI:
+    """Tkinter-based GUI for audio transcription."""
+
+    # pylint: disable=too-many-instance-attributes
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Whisper Audio Transcriber (Optimized)")
@@ -285,43 +301,75 @@ class TranscriberGUI:
         top.pack(fill="x")
 
         ttk.Label(top, text="Input file").grid(row=0, column=0, sticky="w", **pad)
-        ttk.Entry(top, textvariable=self.selected_file, width=90).grid(row=0, column=1, columnspan=6, sticky="we", **pad)
-        ttk.Button(top, text="Browse", command=self.browse_file).grid(row=0, column=7, **pad)
+        ttk.Entry(
+            top, textvariable=self.selected_file, width=90
+        ).grid(row=0, column=1, columnspan=6, sticky="we", **pad)
+        ttk.Button(
+            top, text="Browse", command=self.browse_file
+        ).grid(row=0, column=7, **pad)
 
         ttk.Label(top, text="Model").grid(row=1, column=0, sticky="w", **pad)
-        ttk.Combobox(top, textvariable=self.model_var, values=SUPPORTED_MODELS, width=10, state="readonly").grid(row=1, column=1, sticky="w", **pad)
+        ttk.Combobox(
+            top, textvariable=self.model_var, values=SUPPORTED_MODELS, width=10, state="readonly"
+        ).grid(row=1, column=1, sticky="w", **pad)
 
         ttk.Label(top, text="Detected language").grid(row=1, column=2, sticky="w", **pad)
         ttk.Label(top, textvariable=self.detected_lang_var).grid(row=1, column=3, sticky="w", **pad)
 
         ttk.Label(top, text="Input language").grid(row=1, column=4, sticky="w", **pad)
-        ttk.Combobox(top, textvariable=self.input_lang_override_var, values=["auto", "en", "ur", "hi", "ar", "fr", "de", "es", "tr", "zh"], width=12, state="readonly").grid(row=1, column=5, sticky="w", **pad)
+        langs = ["auto", "en", "ur", "hi", "ar", "fr", "de", "es", "tr", "zh"]
+        ttk.Combobox(
+            top, textvariable=self.input_lang_override_var, values=langs, width=12, state="readonly"
+        ).grid(row=1, column=5, sticky="w", **pad)
 
         ttk.Label(top, text="Output language").grid(row=1, column=6, sticky="w", **pad)
-        ttk.Combobox(top, textvariable=self.output_lang_var, values=OUTPUT_LANGUAGES, width=12, state="readonly").grid(row=1, column=7, sticky="w", **pad)
+        ttk.Combobox(
+            top, textvariable=self.output_lang_var, values=OUTPUT_LANGUAGES, width=12,
+            state="readonly"
+        ).grid(row=1, column=7, sticky="w", **pad)
 
         opts = ttk.LabelFrame(self.root, text="Performance & Features")
         opts.pack(fill="x", padx=8, pady=8)
 
         ttk.Label(opts, text="CPU threads").grid(row=0, column=0, **pad)
-        ttk.Spinbox(opts, from_=1, to=max(1, os.cpu_count() or 8), textvariable=self.thread_var, width=8).grid(row=0, column=1, **pad)
+        ttk.Spinbox(
+            opts, from_=1, to=max(1, os.cpu_count() or 8), textvariable=self.thread_var, width=8
+        ).grid(row=0, column=1, **pad)
 
         ttk.Label(opts, text="Chunk seconds").grid(row=0, column=2, **pad)
-        ttk.Spinbox(opts, from_=30, to=600, increment=30, textvariable=self.chunk_var, width=8).grid(row=0, column=3, **pad)
+        ttk.Spinbox(
+            opts, from_=30, to=600, increment=30, textvariable=self.chunk_var, width=8
+        ).grid(row=0, column=3, **pad)
 
-        ttk.Checkbutton(opts, text="Timestamps", variable=self.timestamps_var).grid(row=0, column=4, sticky="w", **pad)
-        ttk.Checkbutton(opts, text="Word timestamps", variable=self.word_timestamps_var).grid(row=0, column=5, sticky="w", **pad)
-        ttk.Checkbutton(opts, text="Smart silence removal", variable=self.silence_var).grid(row=0, column=6, sticky="w", **pad)
-        ttk.Checkbutton(opts, text="Text cleanup", variable=self.cleanup_var).grid(row=1, column=4, sticky="w", **pad)
-        ttk.Checkbutton(opts, text="Auto-translate output", variable=self.translate_var).grid(row=1, column=5, sticky="w", **pad)
+        ttk.Checkbutton(
+            opts, text="Timestamps", variable=self.timestamps_var
+        ).grid(row=0, column=4, sticky="w", **pad)
+        ttk.Checkbutton(
+            opts, text="Word timestamps", variable=self.word_timestamps_var
+        ).grid(row=0, column=5, sticky="w", **pad)
+        ttk.Checkbutton(
+            opts, text="Smart silence removal", variable=self.silence_var
+        ).grid(row=0, column=6, sticky="w", **pad)
+        ttk.Checkbutton(
+            opts, text="Text cleanup", variable=self.cleanup_var
+        ).grid(row=1, column=4, sticky="w", **pad)
+        ttk.Checkbutton(
+            opts, text="Auto-translate output", variable=self.translate_var
+        ).grid(row=1, column=5, sticky="w", **pad)
 
         actions = ttk.Frame(self.root)
         actions.pack(fill="x", padx=8, pady=6)
-        ttk.Button(actions, text="Start", command=self.start_transcription).pack(side="left", padx=6)
+        ttk.Button(
+            actions, text="Start", command=self.start_transcription
+        ).pack(side="left", padx=6)
         ttk.Button(actions, text="Stop", command=self.stop_transcription).pack(side="left", padx=6)
         ttk.Button(actions, text="Copy", command=self.copy_output).pack(side="left", padx=6)
-        ttk.Button(actions, text="Save TXT", command=lambda: self.save_output("txt")).pack(side="left", padx=6)
-        ttk.Button(actions, text="Save SRT", command=lambda: self.save_output("srt")).pack(side="left", padx=6)
+        ttk.Button(
+            actions, text="Save TXT", command=lambda: self.save_output("txt")
+        ).pack(side="left", padx=6)
+        ttk.Button(
+            actions, text="Save SRT", command=lambda: self.save_output("srt")
+        ).pack(side="left", padx=6)
 
         self.progress = ttk.Progressbar(self.root, orient="horizontal", mode="determinate")
         self.progress.pack(fill="x", padx=8, pady=6)
@@ -333,6 +381,7 @@ class TranscriberGUI:
         self.output_box.pack(fill="both", expand=True, padx=8, pady=8)
 
     def _set_recommended_model(self) -> None:
+        """Sets the model recommended for current hardware."""
         profile = HardwareOptimizer.build_profile(self.thread_var.get())
         rec = HardwareOptimizer.recommend_model(profile.torch_threads, profile.amd_gpu_detected)
         self.model_var.set(rec)
@@ -341,12 +390,15 @@ class TranscriberGUI:
             self._log(note)
 
     def _log(self, msg: str) -> None:
+        """Logs a message to the UI."""
         self.log_queue.put(("log", msg))
 
     def _set_progress(self, value: float, msg: str) -> None:
+        """Updates progress bar and window title."""
         self.log_queue.put(("progress", (value, msg)))
 
     def _pump_logs(self) -> None:
+        """Pumps messages from the log queue to the UI."""
         try:
             while True:
                 event, payload = self.log_queue.get_nowait()
@@ -370,11 +422,17 @@ class TranscriberGUI:
         self.root.after(120, self._pump_logs)
 
     def browse_file(self) -> None:
-        path = filedialog.askopenfilename(filetypes=[("Media", "*.wav *.mp3 *.m4a *.mp4 *.mkv *.flac *.aac *.ogg"), ("All", "*.*")])
+        """Opens file dialog to select audio/video file."""
+        filetypes = [
+            ("Media", "*.wav *.mp3 *.m4a *.mp4 *.mkv *.flac *.aac *.ogg"),
+            ("All", "*.*")
+        ]
+        path = filedialog.askopenfilename(filetypes=filetypes)
         if path:
             self.selected_file.set(path)
 
     def start_transcription(self) -> None:
+        """Starts transcription in a background thread."""
         if self.worker_thread and self.worker_thread.is_alive():
             messagebox.showwarning("Busy", "Transcription is already running.")
             return
@@ -390,10 +448,13 @@ class TranscriberGUI:
         self.worker_thread.start()
 
     def stop_transcription(self) -> None:
+        """Signals background thread to stop transcription."""
         self.stop_event.set()
         self._log("Stop requested. Finishing current chunk then aborting...")
 
+    # pylint: disable=too-many-locals
     def _run_transcription(self) -> None:
+        """Main worker method for transcription pipeline."""
         input_file = self.selected_file.get().strip()
         timestamps = self.timestamps_var.get()
         word_ts = self.word_timestamps_var.get()
@@ -401,38 +462,39 @@ class TranscriberGUI:
 
         try:
             profile = HardwareOptimizer.build_profile(thread_limit)
-            self._log(f"Device={profile.device}, fp16={profile.fp16}, threads={profile.torch_threads}")
+            self._log(
+                f"Device={profile.device}, fp16={profile.fp16}, threads={profile.torch_threads}"
+            )
             for note in profile.notes:
                 self._log(note)
 
             engine = WhisperEngine(profile, self.model_var.get())
 
-            with tempfile.TemporaryDirectory(prefix="whisper_gui_") as td:
-                preprocessed = str(Path(td) / "preprocessed.wav")
-                self._set_progress(0.05, "Preprocessing audio")
-                AudioPreprocessor.preprocess_to_wav(input_file, preprocessed, self.silence_var.get())
+            self._set_progress(0.05, "Preprocessing audio")
+            audio = AudioPreprocessor.preprocess_to_memory(input_file, self.silence_var.get())
 
-                self._set_progress(0.12, "Detecting language")
-                detected_lang, lang_prob = engine.detect_language(preprocessed)
-                self.detected_lang_var.set(f"{detected_lang} ({lang_prob:.2f})")
-                self._log(f"Detected language={detected_lang} confidence={lang_prob:.2f}")
+            self._set_progress(0.12, "Detecting language")
+            detected_lang, lang_prob = engine.detect_language(audio)
+            self.detected_lang_var.set(f"{detected_lang} ({lang_prob:.2f})")
+            self._log(f"Detected language={detected_lang} confidence={lang_prob:.2f}")
 
-                language = None if self.input_lang_override_var.get() == "auto" else self.input_lang_override_var.get()
-                if language is None:
-                    language = detected_lang
+            language = (
+                None if self.input_lang_override_var.get() == "auto"
+                else self.input_lang_override_var.get()
+            )
+            if language is None:
+                language = detected_lang
 
-                self._set_progress(0.2, "Chunking")
-                chunks = AudioPreprocessor.chunk_audio(preprocessed, self.chunk_var.get(), td)
-                self._log(f"Prepared {len(chunks)} chunk(s)")
-
-                result = engine.transcribe_chunks(
-                    chunks=chunks,
-                    language=language,
-                    timestamps=timestamps,
-                    word_timestamps=word_ts,
-                    stop_event=self.stop_event,
-                    progress_cb=lambda p, msg: self._set_progress(0.2 + 0.75 * p, msg),
-                )
+            self._set_progress(0.2, "Transcribing")
+            result = engine.transcribe_chunks(
+                audio=audio,
+                chunk_seconds=self.chunk_var.get(),
+                language=language,
+                timestamps=timestamps,
+                word_timestamps=word_ts,
+                stop_event=self.stop_event,
+                progress_cb=lambda p, msg: self._set_progress(0.2 + 0.75 * p, msg),
+            )
 
             text = result.get("text", "")
             if self.cleanup_var.get():
@@ -446,29 +508,18 @@ class TranscriberGUI:
             self.last_result = result
             self._set_progress(1.0, "Done")
             self.log_queue.put(("done", text))
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             self.log_queue.put(("error", str(exc)))
 
     def _translate_text(self, text: str, source_lang: str, target_lang: str) -> str:
-        if target_lang == "english":
-            target = "en"
-        elif target_lang == "urdu":
-            target = "ur"
-        elif target_lang == "hindi":
-            target = "hi"
-        elif target_lang == "arabic":
-            target = "ar"
-        elif target_lang == "french":
-            target = "fr"
-        elif target_lang == "german":
-            target = "de"
-        elif target_lang == "spanish":
-            target = "es"
-        elif target_lang == "turkish":
-            target = "tr"
-        elif target_lang == "chinese":
-            target = "zh-CN"
-        else:
+        """Translates transcribed text to target language."""
+        mapping = {
+            "english": "en", "urdu": "ur", "hindi": "hi", "arabic": "ar",
+            "french": "fr", "german": "de", "spanish": "es", "turkish": "tr",
+            "chinese": "zh-CN"
+        }
+        target = mapping.get(target_lang)
+        if not target:
             return text
 
         if GoogleTranslator is None:
@@ -479,11 +530,12 @@ class TranscriberGUI:
         self._log(f"Translating output {src} -> {target}")
         try:
             return GoogleTranslator(source=src, target=target).translate(text)
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             self._log(f"Translation failed: {exc}")
             return text
 
     def copy_output(self) -> None:
+        """Copies transcription text to clipboard."""
         text = self.output_box.get("1.0", "end").strip()
         if text:
             self.root.clipboard_clear()
@@ -491,12 +543,15 @@ class TranscriberGUI:
             self._log("Output copied to clipboard.")
 
     def save_output(self, fmt: str) -> None:
+        """Saves transcription result to file (TXT or SRT)."""
         if not self.last_result:
             messagebox.showwarning("No output", "No transcription result available yet.")
             return
 
         if fmt == "txt":
-            path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text", "*.txt")])
+            path = filedialog.asksaveasfilename(
+                defaultextension=".txt", filetypes=[("Text", "*.txt")]
+            )
             if not path:
                 return
             Path(path).write_text(self.last_result.get("text", ""), encoding="utf-8")
@@ -506,7 +561,9 @@ class TranscriberGUI:
             if not segments:
                 messagebox.showwarning("No timestamps", "Enable timestamps to export SRT.")
                 return
-            path = filedialog.asksaveasfilename(defaultextension=".srt", filetypes=[("SubRip", "*.srt")])
+            path = filedialog.asksaveasfilename(
+                defaultextension=".srt", filetypes=[("SubRip", "*.srt")]
+            )
             if not path:
                 return
             Path(path).write_text(format_srt(segments), encoding="utf-8")
@@ -514,6 +571,7 @@ class TranscriberGUI:
 
 
 def main() -> None:
+    """Entry point of the application."""
     root = tk.Tk()
     app = TranscriberGUI(root)
     del app
