@@ -1,0 +1,3 @@
+## 2025-01-24 - [In-memory audio processing pipeline]
+**Learning:** Moving from a disk-based preprocessing and chunking pipeline to a full in-memory NumPy pipeline significantly reduces overhead. The original approach spawned multiple FFmpeg processes to create chunk files on disk, which was slow and redundant. By piping FFmpeg output directly to a NumPy array and slicing in-memory, the "chunking" phase becomes virtually instantaneous.
+**Action:** Use FFmpeg pipes to load audio directly into NumPy arrays for processing in Whisper-based applications. Always use `np.frombuffer(out, np.float32).copy()` to ensure the buffer is writable for Whisper/Torch.
