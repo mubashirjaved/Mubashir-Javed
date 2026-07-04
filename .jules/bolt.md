@@ -1,0 +1,3 @@
+## 2025-01-24 - In-memory NumPy audio pipeline refactor
+**Learning:** Transitioning from disk-based WAV chunking to an in-memory NumPy pipeline significantly reduces I/O overhead and redundant FFmpeg process spawns. For a 600s audio file, this optimization achieved a ~1.77x speedup in the preprocessing and chunking phase. Whisper's `model.transcribe` accepts NumPy arrays directly, facilitating a seamless integration.
+**Action:** Use FFmpeg pipes (`-f f32le -`) to stream audio data directly into NumPy arrays for high-performance audio processing tasks. Always ensure word-level timestamps are correctly offset when processing audio in chunks.
