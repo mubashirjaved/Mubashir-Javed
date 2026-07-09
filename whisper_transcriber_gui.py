@@ -1,13 +1,10 @@
-import json
 import math
 import os
 import queue
 import re
 import shutil
 import subprocess
-import tempfile
 import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -15,6 +12,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import numpy as np
 import torch
 import whisper
 
@@ -127,45 +125,29 @@ class HardwareOptimizer:
 
 
 class AudioPreprocessor:
-    @staticmethod
-    def ffprobe_duration(path: str) -> float:
-        cmd = [
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", path,
-        ]
-        out = subprocess.check_output(cmd, text=True).strip()
-        return float(out)
+    """Handles audio preprocessing and chunking using FFmpeg and NumPy."""
 
     @staticmethod
-    def preprocess_to_wav(input_path: str, output_path: str, smart_silence: bool) -> None:
+    def preprocess_to_memory(input_path: str, smart_silence: bool) -> np.ndarray:
+        """Preprocesses audio to a NumPy float32 array at 16kHz mono."""
         silence_filter = ["-af", "silenceremove=stop_periods=-1:stop_duration=0.6:stop_threshold=-45dB"] if smart_silence else []
         cmd = [
             "ffmpeg", "-y", "-hwaccel", "auto", "-i", input_path,
-            "-ac", "1", "-ar", "16000",
-            *silence_filter,
-            output_path,
+            "-f", "f32le", "-ac", "1", "-ar", "16000",
+            *silence_filter, "-",
         ]
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Using a single FFmpeg call to pipe raw float32 PCM data to stdout
+        result = subprocess.run(cmd, capture_output=True, check=True)
+        return np.frombuffer(result.stdout, np.float32).copy()
 
     @staticmethod
-    def chunk_audio(preprocessed_wav: str, chunk_seconds: int, temp_dir: str) -> List[str]:
-        duration = AudioPreprocessor.ffprobe_duration(preprocessed_wav)
-        if duration <= chunk_seconds:
-            return [preprocessed_wav]
-
+    def chunk_audio(audio: np.ndarray, chunk_seconds: int) -> List[np.ndarray]:
+        """Splits NumPy audio array into chunks of specified duration."""
+        sample_rate = 16000
+        samples_per_chunk = chunk_seconds * sample_rate
         chunks = []
-        start = 0.0
-        idx = 0
-        while start < duration:
-            chunk_path = str(Path(temp_dir) / f"chunk_{idx:04d}.wav")
-            cmd = [
-                "ffmpeg", "-y", "-ss", str(start), "-t", str(chunk_seconds), "-i", preprocessed_wav,
-                "-ac", "1", "-ar", "16000", chunk_path,
-            ]
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            chunks.append(chunk_path)
-            start += chunk_seconds
-            idx += 1
+        for i in range(0, len(audio), samples_per_chunk):
+            chunks.append(audio[i : i + samples_per_chunk])
         return chunks
 
 
@@ -180,28 +162,32 @@ class TextPostProcessor:
 
 
 class WhisperEngine:
+    """Core transcription engine using OpenAI Whisper."""
+
     def __init__(self, profile: HardwareProfile, model_name: str):
         self.profile = profile
         self.model_name = model_name
         self.model = whisper.load_model(model_name, device=profile.device)
 
-    def detect_language(self, audio_path: str) -> Tuple[str, float]:
-        audio = whisper.load_audio(audio_path)
-        audio = whisper.pad_or_trim(audio)
-        mel = whisper.log_mel_spectrogram(audio).to(self.model.device)
+    def detect_language(self, audio: np.ndarray) -> Tuple[str, float]:
+        """Detects the spoken language from a NumPy audio array."""
+        audio_trimmed = whisper.pad_or_trim(audio)
+        mel = whisper.log_mel_spectrogram(audio_trimmed).to(self.model.device)
         _, probs = self.model.detect_language(mel)
         lang, confidence = max(probs.items(), key=lambda item: item[1])
         return lang, confidence
 
     def transcribe_chunks(
         self,
-        chunks: List[str],
+        chunks: List[np.ndarray],
         language: Optional[str],
         timestamps: bool,
         word_timestamps: bool,
+        chunk_seconds: int,
         stop_event: threading.Event,
         progress_cb: Callable[[float, str], None],
     ) -> Dict:
+        """Transcribes a list of NumPy audio chunks and merges the results."""
         all_segments = []
         full_text = []
 
@@ -219,11 +205,15 @@ class WhisperEngine:
                 verbose=False,
                 condition_on_previous_text=False,
             )
-            chunk_offset = idx * 180
+            chunk_offset = idx * chunk_seconds
             for seg in result.get("segments", []):
                 seg = dict(seg)
                 seg["start"] = seg.get("start", 0.0) + chunk_offset
                 seg["end"] = seg.get("end", 0.0) + chunk_offset
+                if word_timestamps and "words" in seg:
+                    for word in seg["words"]:
+                        word["start"] += chunk_offset
+                        word["end"] += chunk_offset
                 seg["confidence"] = round(math.exp(seg.get("avg_logprob", -4.0)), 3)
                 all_segments.append(seg)
             full_text.append(result.get("text", ""))
@@ -398,6 +388,7 @@ class TranscriberGUI:
         timestamps = self.timestamps_var.get()
         word_ts = self.word_timestamps_var.get()
         thread_limit = self.thread_var.get()
+        chunk_seconds = self.chunk_var.get()
 
         try:
             profile = HardwareOptimizer.build_profile(thread_limit)
@@ -407,32 +398,33 @@ class TranscriberGUI:
 
             engine = WhisperEngine(profile, self.model_var.get())
 
-            with tempfile.TemporaryDirectory(prefix="whisper_gui_") as td:
-                preprocessed = str(Path(td) / "preprocessed.wav")
-                self._set_progress(0.05, "Preprocessing audio")
-                AudioPreprocessor.preprocess_to_wav(input_file, preprocessed, self.silence_var.get())
+            self._set_progress(0.05, "Preprocessing audio")
+            # In-memory preprocessing eliminates disk I/O bottlenecks
+            audio_data = AudioPreprocessor.preprocess_to_memory(input_file, self.silence_var.get())
 
-                self._set_progress(0.12, "Detecting language")
-                detected_lang, lang_prob = engine.detect_language(preprocessed)
-                self.detected_lang_var.set(f"{detected_lang} ({lang_prob:.2f})")
-                self._log(f"Detected language={detected_lang} confidence={lang_prob:.2f}")
+            self._set_progress(0.12, "Detecting language")
+            detected_lang, lang_prob = engine.detect_language(audio_data)
+            self.detected_lang_var.set(f"{detected_lang} ({lang_prob:.2f})")
+            self._log(f"Detected language={detected_lang} confidence={lang_prob:.2f}")
 
-                language = None if self.input_lang_override_var.get() == "auto" else self.input_lang_override_var.get()
-                if language is None:
-                    language = detected_lang
+            language = None if self.input_lang_override_var.get() == "auto" else self.input_lang_override_var.get()
+            if language is None:
+                language = detected_lang
 
-                self._set_progress(0.2, "Chunking")
-                chunks = AudioPreprocessor.chunk_audio(preprocessed, self.chunk_var.get(), td)
-                self._log(f"Prepared {len(chunks)} chunk(s)")
+            self._set_progress(0.2, "Chunking")
+            # Memory-efficient slicing instead of temporary file creation
+            chunks = AudioPreprocessor.chunk_audio(audio_data, chunk_seconds)
+            self._log(f"Prepared {len(chunks)} chunk(s)")
 
-                result = engine.transcribe_chunks(
-                    chunks=chunks,
-                    language=language,
-                    timestamps=timestamps,
-                    word_timestamps=word_ts,
-                    stop_event=self.stop_event,
-                    progress_cb=lambda p, msg: self._set_progress(0.2 + 0.75 * p, msg),
-                )
+            result = engine.transcribe_chunks(
+                chunks=chunks,
+                language=language,
+                timestamps=timestamps,
+                word_timestamps=word_ts,
+                chunk_seconds=chunk_seconds,
+                stop_event=self.stop_event,
+                progress_cb=lambda p, msg: self._set_progress(0.2 + 0.75 * p, msg),
+            )
 
             text = result.get("text", "")
             if self.cleanup_var.get():
