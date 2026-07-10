@@ -1,0 +1,3 @@
+## 2025-05-15 - [In-memory Audio Pipeline with NumPy Slicing]
+**Learning:** Transitioning from disk-based WAV chunking to an in-memory NumPy pipeline significantly reduces preprocessing overhead. FFmpeg can pipe raw float32 PCM (`f32le`) directly to stdout, which NumPy can ingest via `np.frombuffer`. This eliminates redundant disk I/O and multiple subprocess spawns for chunking (O(N) spawns to 1). Slicing the NumPy array for chunks is near-instantaneous compared to FFmpeg's stream seeking and re-encoding.
+**Action:** Use FFmpeg pipes and NumPy slicing for any audio processing pipeline where the total data size (e.g., ~230MB/hour for 16kHz mono f32) fits comfortably in memory.
