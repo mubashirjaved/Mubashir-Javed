@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Reports & Logs | Enterprise Mechanical Store ERP{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12 d-flex justify-content-between align-items-center">
+        <h4 class="fw-bold mb-0"><i class="fa-solid fa-file-invoice-dollar text-primary me-2"></i> Audit Logs & PDF/CSV Reports</h4>
+        <div class="d-flex gap-2">
+            <!-- Dynamic CSV Export -->
+            <a href="/reports/export-inventory" class="btn btn-outline-success">
+                <i class="fa-solid fa-file-csv me-1"></i> Export Inventory CSV
+            </a>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm border-0 mb-4">
+    <div class="card-header bg-transparent border-0 pt-3">
+        <h5 class="fw-bold mb-0 text-secondary"><i class="fa-solid fa-user-shield me-2"></i> Security Audit Logs (Level-2 Security clearance)</h5>
+        <small class="text-muted">Direct read-only activity record showing modification trials, user logouts, and structural tamper validations.</small>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" id="reportsAuditTable">
+                <thead class="table-dark">
+                    <tr>
+                        <th class="ps-3">Audit Timestamp</th>
+                        <th>Auditor / Admin User</th>
+                        <th>Sec-Operation</th>
+                        <th class="pe-3">Operation Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="ps-3 text-muted">Just Now</td>
+                        <td><span class="badge bg-danger">system</span></td>
+                        <td><strong>INTEGRITY_VERIFICATION</strong></td>
+                        <td class="pe-3">Completed database integrity validation check. All record HMAC signature values matched completely. Status: OK</td>
+                    </tr>
+                    <tr>
+                        <td class="ps-3 text-muted">2 hours ago</td>
+                        <td><span class="badge bg-danger">system</span></td>
+                        <td><strong>USER_CREATION</strong></td>
+                        <td class="pe-3">Created viewer user session 'floor_tech_1' with role clearance level: Viewer</td>
+                    </tr>
+                    <tr>
+                        <td class="ps-3 text-muted">4 hours ago</td>
+                        <td><span class="badge bg-danger">admin</span></td>
+                        <td><strong>USER_ROLE_CHANGE</strong></td>
+                        <td class="pe-3">Changed user role clearance of 'inventory_mgr' from Viewer to InventoryManager. Privilege updated on Session DB.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.querySelectorAll(".sidebar-nav-link").forEach(el => el.classList.remove("active"));
+    document.getElementById("nav-reports").classList.add("active");
+</script>
+{% endblock %}
