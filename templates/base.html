@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Enterprise Mechanical Inventory & ERP{% endblock %}</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- FontAwesome Premium Icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- DataTables CSS -->
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --text-color: #212529;
+            --card-bg: #ffffff;
+            --sidebar-bg: #1a252f;
+            --sidebar-color: #ecf0f1;
+            --nav-bg: #ffffff;
+            --nav-border: #e9ecef;
+            --accent-color: #2c3e50;
+            --primary-gradient: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #121212;
+            --text-color: #e0e0e0;
+            --card-bg: #1e1e1e;
+            --sidebar-bg: #0d0d0d;
+            --sidebar-color: #b0b0b0;
+            --nav-bg: #1a1a1a;
+            --nav-border: #2d2d2d;
+            --accent-color: #0d6efd;
+            --primary-gradient: linear-gradient(135deg, #121212 0%, #1c1c1c 100%);
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            transition: background-color 0.3s, color 0.3s;
+            overflow-x: hidden;
+        }
+
+        /* Sidebar Styling */
+        .sidebar {
+            background-color: var(--sidebar-bg);
+            color: var(--sidebar-color);
+            min-height: 100vh;
+            width: 260px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 100;
+            transition: all 0.3s;
+            box-shadow: 4px 0 10px rgba(0,0,0,0.1);
+        }
+
+        .sidebar-brand {
+            padding: 24px;
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            background: rgba(0,0,0,0.2);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .sidebar-nav {
+            padding: 20px 0;
+        }
+
+        .sidebar-nav-link {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 12px 24px;
+            color: var(--sidebar-color);
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.2s;
+            border-left: 4px solid transparent;
+        }
+
+        .sidebar-nav-link:hover, .sidebar-nav-link.active {
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+            border-left-color: var(--accent-color);
+        }
+
+        /* Navbar & Top Nav */
+        .top-navbar {
+            background-color: var(--nav-bg);
+            border-bottom: 1px solid var(--nav-border);
+            height: 70px;
+            margin-left: 260px;
+            padding: 0 30px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 99;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+
+        /* Main Content Panel */
+        .main-content {
+            margin-left: 260px;
+            padding: 30px;
+            min-height: calc(100vh - 70px);
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+            margin-bottom: 24px;
+            color: var(--text-color);
+        }
+
+        /* Loading Overlay */
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 9999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        #loading-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* Search Everywhere */
+        .search-container {
+            position: relative;
+            width: 300px;
+        }
+
+        .search-container input {
+            border-radius: 20px;
+            padding-left: 35px;
+            background-color: var(--bg-color);
+            border: 1px solid var(--nav-border);
+            color: var(--text-color);
+        }
+
+        .search-container i {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #95a5a6;
+        }
+
+        /* Responsive */
+        @media (max-width: 992px) {
+            .sidebar {
+                left: -260px;
+            }
+            .sidebar.active {
+                left: 0;
+            }
+            .top-navbar, .main-content {
+                margin-left: 0;
+            }
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+    <!-- Loading Spinner Animation -->
+    <div id="loading-overlay">
+        <div class="spinner-border text-light" style="width: 3rem; height: 3rem;" role="status">
+            <span class="visually-hidden">Loading ERP Modules...</span>
+        </div>
+    </div>
+
+    <!-- Sidebar Section -->
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-brand">
+            <i class="fa-solid fa-gears text-info"></i>
+            <span>M-Store ERP</span>
+        </div>
+        <div class="sidebar-nav">
+            <a href="/" class="sidebar-nav-link active" id="nav-dashboard">
+                <i class="fa-solid fa-chart-line"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="/inventory" class="sidebar-nav-link" id="nav-inventory">
+                <i class="fa-solid fa-boxes-stacked"></i>
+                <span>Inventory Control</span>
+            </a>
+            <a href="/suppliers" class="sidebar-nav-link" id="nav-suppliers">
+                <i class="fa-solid fa-truck-field"></i>
+                <span>Suppliers & Orders</span>
+            </a>
+            <a href="/reports" class="sidebar-nav-link" id="nav-reports">
+                <i class="fa-solid fa-file-invoice-dollar"></i>
+                <span>Audit & Reports</span>
+            </a>
+            {% if session.get('user_role') == 'Admin' %}
+            <a href="/backups" class="sidebar-nav-link" id="nav-backups">
+                <i class="fa-solid fa-shield-halved"></i>
+                <span>Security & Backups</span>
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Top Navigation Bar -->
+    <div class="top-navbar">
+        <div class="d-flex align-items-center gap-3">
+            <button class="btn btn-sm d-lg-none" id="sidebarToggleBtn">
+                <i class="fa-solid fa-bars fs-4"></i>
+            </button>
+            <div class="search-container">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="text" class="form-control" id="searchEverywhere" placeholder="Search everywhere...">
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-4">
+            <!-- Theme Toggle -->
+            <button class="btn btn-outline-secondary btn-sm" id="themeToggleBtn" title="Toggle Light/Dark Mode">
+                <i class="fa-solid fa-moon" id="themeIcon"></i>
+            </button>
+
+            <!-- Real-time notifications bell -->
+            <div class="dropdown">
+                <button class="btn btn-link text-dark position-relative" type="button" data-bs-toggle="dropdown" aria-expanded="false" id="notifBell">
+                    <i class="fa-solid fa-bell fs-5 text-secondary"></i>
+                    <span class="position-absolute top-0 start-100 translate-middle p-1 bg-danger border border-light rounded-circle" id="notifBadge"></span>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end shadow border-0" style="width: 320px;" id="notifDropdown">
+                    <li class="dropdown-header">System Notifications</li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item text-wrap" href="#">Welcome back! Security session initialized securely.</a></li>
+                    <li><a class="dropdown-item text-wrap text-warning" href="#" id="lowStockWarning">Checking low-stock alerts...</a></li>
+                </ul>
+            </div>
+
+            <!-- User profile dropdown -->
+            <div class="dropdown">
+                <button class="btn btn-link d-flex align-items-center gap-2 text-decoration-none" type="button" data-bs-toggle="dropdown">
+                    <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" style="width: 35px; height: 35px; font-weight: bold;">
+                        {{ session.get('username', 'U')[0].upper() }}
+                    </div>
+                    <div class="text-start d-none d-md-block">
+                        <div class="fw-bold text-dark fs-7" style="line-height: 1.1;">{{ session.get('full_name', 'User Account') }}</div>
+                        <small class="text-muted fs-8">{{ session.get('user_role', 'Viewer') }}</small>
+                    </div>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end shadow border-0">
+                    <li><h6 class="dropdown-header">Logged In User: {{ session.get('username') }}</h6></li>
+                    <li><a class="dropdown-item" href="#"><i class="fa-solid fa-user-shield me-2"></i> Role: {{ session.get('user_role') }}</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item text-danger" href="/logout"><i class="fa-solid fa-right-from-bracket me-2"></i> Sign Out</a></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Dynamic Content Wrapper -->
+    <div class="main-content">
+        <!-- Flask Flash Messaging Feed -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category if category != 'error' else 'danger' }} alert-dismissible fade show shadow-sm" role="alert">
+                <i class="fa-solid {% if category == 'success' %}fa-circle-check{% else %}fa-triangle-exclamation{% endif %} me-2"></i>
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Bootstrap 5, ChartJS, DataTables JS Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        // Automatic session timeout handler (auto logout after 15 mins inactivity)
+        let lastActivityTime = Date.now();
+        const INACTIVITY_TIMEOUT = 15 * 60 * 1000; // 15 Minutes in milliseconds
+
+        function resetActivityTimer() {
+            lastActivityTime = Date.now();
+        }
+
+        document.addEventListener("mousemove", resetActivityTimer);
+        document.addEventListener("keydown", resetActivityTimer);
+
+        setInterval(() => {
+            if (Date.now() - lastActivityTime > INACTIVITY_TIMEOUT) {
+                // Flash message and redirect
+                alert("Security Session Expired. You will be logged out automatically.");
+                window.location.href = "/logout";
+            }
+        }, 30000); // Check every 30 seconds
+
+        // Theme Toggle
+        const themeToggleBtn = document.getElementById("themeToggleBtn");
+        const themeIcon = document.getElementById("themeIcon");
+
+        // Load default preference or set to light
+        const currentTheme = localStorage.getItem("theme") || "light";
+        document.documentElement.setAttribute("data-theme", currentTheme);
+        if (currentTheme === "dark") {
+            themeIcon.className = "fa-solid fa-sun";
+            themeToggleBtn.classList.replace("btn-outline-secondary", "btn-outline-warning");
+        }
+
+        themeToggleBtn.addEventListener("click", () => {
+            let targetTheme = "light";
+            if (document.documentElement.getAttribute("data-theme") === "light") {
+                targetTheme = "dark";
+                themeIcon.className = "fa-solid fa-sun";
+                themeToggleBtn.classList.replace("btn-outline-secondary", "btn-outline-warning");
+            } else {
+                themeIcon.className = "fa-solid fa-moon";
+                themeToggleBtn.classList.replace("btn-outline-warning", "btn-outline-secondary");
+            }
+            document.documentElement.setAttribute("data-theme", targetTheme);
+            localStorage.setItem("theme", targetTheme);
+        });
+
+        // Sidebar Responsive Toggle
+        const sidebarToggleBtn = document.getElementById("sidebarToggleBtn");
+        const sidebar = document.getElementById("sidebar");
+        if (sidebarToggleBtn) {
+            sidebarToggleBtn.addEventListener("click", () => {
+                sidebar.classList.toggle("active");
+            });
+        }
+
+        // Show/Hide Loading Overlay during page navigation or form submissions
+        function showLoading() {
+            document.getElementById("loading-overlay").classList.add("active");
+        }
+        function hideLoading() {
+            document.getElementById("loading-overlay").classList.remove("active");
+        }
+
+        // Quick Search Everywhere function
+        const searchInput = document.getElementById("searchEverywhere");
+        if (searchInput) {
+            searchInput.addEventListener("keyup", function() {
+                let term = this.value.toLowerCase();
+                // Simple highlights elements or tables that match term
+                let rows = document.querySelectorAll("table tbody tr");
+                rows.forEach(row => {
+                    let text = row.innerText.toLowerCase();
+                    row.style.display = text.includes(term) ? "" : "none";
+                });
+            });
+        }
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

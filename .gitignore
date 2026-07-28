@@ -1,0 +1,10 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database and secrets
+instance/
+.db_field_key
+flask_output.log
+/home/jules/verification/

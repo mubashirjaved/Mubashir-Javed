@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+
+{% block title %}Inventory Management | Enterprise Mechanical Store ERP{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12 d-flex justify-content-between align-items-center">
+        <h4 class="fw-bold mb-0"><i class="fa-solid fa-boxes-stacked text-primary me-2"></i> Mechanical Parts Inventory</h4>
+        <div class="d-flex gap-2">
+            <!-- Register Part Button Trigger -->
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#registerPartModal">
+                <i class="fa-solid fa-plus me-1"></i> Register New SKU
+            </button>
+            <!-- Stock Transaction Trigger -->
+            <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#stockInModal">
+                <i class="fa-solid fa-circle-down me-1"></i> Stock In
+            </button>
+            <button class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#stockOutModal">
+                <i class="fa-solid fa-circle-up me-1"></i> Stock Out
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm border-0">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle" id="inventoryTable">
+                <thead>
+                    <tr class="table-dark">
+                        <th>SKU</th>
+                        <th>Part Name</th>
+                        <th>Category</th>
+                        <th>Location</th>
+                        <th class="text-center">Qty in Stock</th>
+                        <th class="text-center">Safety Limit</th>
+                        <th class="text-end">Unit Price ($)</th>
+                        <th class="text-end">Total Valuation ($)</th>
+                        <th>Notes / Specs</th>
+                    </tr>
+                </thead>
+                <tbody id="inventoryTableBody">
+                    <tr>
+                        <td colspan="9" class="text-center py-4 text-muted">Loading live mechanical parts database...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Register Part -->
+<div class="modal fade" id="registerPartModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form action="/inventory" method="POST" onsubmit="showLoading()">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title fw-bold"><i class="fa-solid fa-circle-plus me-2 text-info"></i> Register New Mechanical SKU</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">SKU (Stock Keeping Unit) *</label>
+                            <input type="text" class="form-control" name="sku" placeholder="e.g. MS-GEAR-105" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Part Name *</label>
+                            <input type="text" class="form-control" name="name" placeholder="e.g. Spur Gear 20 Teeth" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Category *</label>
+                            <input type="text" class="form-control" name="category" placeholder="e.g. Gears / Bearings" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Warehouse Rack Location *</label>
+                            <input type="text" class="form-control" name="location" placeholder="e.g. Rack-B3-Level1" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Safety Reorder Limit *</label>
+                            <input type="number" class="form-control" name="safety_threshold" value="10" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Unit Cost / Price ($) *</label>
+                            <input type="number" step="0.01" class="form-control" name="unit_price" value="0.00" required>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Technical Specifications / Encrypted Notes</label>
+                            <textarea class="form-control" name="notes" rows="3" placeholder="Enter metallurgical composition, measurements, or private notes here. Will be fully AES-256 encrypted on db level."></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Register SKU</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Stock In -->
+<div class="modal fade" id="stockInModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="/inventory/stock-in" method="POST" onsubmit="showLoading()">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title fw-bold"><i class="fa-solid fa-circle-down me-2"></i> Receive Mechanical Stock In</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Select Part SKU *</label>
+                        <select class="form-select select-sku-list" name="sku" required>
+                            <!-- Populated dynamically -->
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Quantity to Receive *</label>
+                        <input type="number" class="form-control" name="quantity" min="1" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Reference Document / PO Number</label>
+                        <input type="text" class="form-control" name="reference_id" placeholder="e.g. PO-88192 or Direct Stock In">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success">Complete Stock-In</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Stock Out -->
+<div class="modal fade" id="stockOutModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="/inventory/stock-out" method="POST" onsubmit="showLoading()">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title fw-bold"><i class="fa-solid fa-circle-up me-2"></i> Issue Mechanical Stock Out</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Select Part SKU *</label>
+                        <select class="form-select select-sku-list" name="sku" required>
+                            <!-- Populated dynamically -->
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Quantity to Issue *</label>
+                        <input type="number" class="form-control" name="quantity" min="1" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Issued To Employee (Full Name) *</label>
+                        <input type="text" class="form-control" name="issued_to_employee" placeholder="e.g. Michael Vance (Senior Tech)" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Work Order / Maintenance Ticket Reference *</label>
+                        <input type="text" class="form-control" name="work_order_reference" placeholder="e.g. WO-PUMP-203" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Complete Stock-Out</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.querySelectorAll(".sidebar-nav-link").forEach(el => el.classList.remove("active"));
+    document.getElementById("nav-inventory").classList.add("active");
+
+    $(document).ready(function() {
+        // Fetch all mechanical parts to render in table and fill drop-downs
+        $.ajax({
+            url: "/api/v1/inventory",
+            headers: { "Authorization": "Bearer " + localStorage.getItem("jwt_token") },
+            type: "GET",
+            success: function(items) {
+                let tableHtml = "";
+                let selectHtml = "";
+
+                if(items.length === 0) {
+                    tableHtml = "<tr><td colspan='9' class='text-center py-4 text-muted'>No inventory items registered in system yet.</td></tr>";
+                } else {
+                    items.forEach(item => {
+                        let totalVal = (item.quantity * item.unit_price).toFixed(2);
+                        let isLow = item.quantity <= item.safety_threshold;
+                        let qtyClass = isLow ? "text-danger fw-bold" : "text-dark";
+                        let warnBadge = isLow ? `<span class="badge bg-danger ms-2"><i class="fa-solid fa-triangle-exclamation"></i> Reorder</span>` : "";
+
+                        tableHtml += `<tr>
+                            <td><strong>${item.sku}</strong></td>
+                            <td>${item.name}</td>
+                            <td><span class="badge bg-light text-dark">${item.category}</span></td>
+                            <td><i class="fa-solid fa-location-dot text-muted me-1"></i> ${item.location}</td>
+                            <td class="text-center ${qtyClass}">${item.quantity} ${warnBadge}</td>
+                            <td class="text-center text-muted">${item.safety_threshold}</td>
+                            <td class="text-end font-monospace">$${item.unit_price.toFixed(2)}</td>
+                            <td class="text-end fw-bold font-monospace">$${totalVal}</td>
+                            <td class="text-muted text-wrap fs-8"><em>${item.notes || '-'}</em></td>
+                        </tr>`;
+
+                        selectHtml += `<option value="${item.sku}">${item.sku} - ${item.name} (${item.quantity} left)</option>`;
+                    });
+                }
+
+                $("#inventoryTableBody").html(tableHtml);
+                $(".select-sku-list").html(selectHtml);
+
+                // Initialize premium enterprise search functionality using DataTables
+                $('#inventoryTable').DataTable({
+                    "paging": true,
+                    "ordering": true,
+                    "info": true,
+                    "destroy": true,
+                    "order": [[4, "asc"]] // Order by quantity ascending to view warnings first
+                });
+            }
+        });
+    });
+</script>
+{% endblock %}

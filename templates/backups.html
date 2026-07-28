@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Security & Database Backups | Enterprise Mechanical Store ERP{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <h4 class="fw-bold mb-1"><i class="fa-solid fa-shield-halved text-primary me-2"></i> Security Control & Backup Management</h4>
+        <p class="text-muted mb-0">Admin command console for database tamper detection signature checks and manual secure backup staging.</p>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- Trigger Backup Console -->
+    <div class="col-xl-6">
+        <div class="card p-4">
+            <h5 class="fw-bold mb-3 text-primary"><i class="fa-solid fa-cloud-arrow-up me-2"></i> Generate Safe Hot-Backup</h5>
+            <p>Creates a point-in-time full binary copy of the encrypted SQLite instance inside the server's restricted local repository path.</p>
+
+            <form action="/backups" method="POST" onsubmit="showLoading()">
+                <input type="hidden" name="action" value="trigger_backup">
+                <button type="submit" class="btn btn-primary py-2 px-4">
+                    <i class="fa-solid fa-database me-2"></i> Run Backup Staging
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Verify Record Tamper Checksums -->
+    <div class="col-xl-6">
+        <div class="card p-4">
+            <h5 class="fw-bold mb-3 text-danger"><i class="fa-solid fa-fingerprint me-2"></i> Cryptographic Tamper Detection</h5>
+            <p>Runs a deep cryptographic comparison of every database record's internal SHA-256 HMAC signature with current attributes to detect binary database alterations.</p>
+
+            <form action="/backups" method="POST" onsubmit="showLoading()">
+                <input type="hidden" name="action" value="verify_integrity">
+                <button type="submit" class="btn btn-danger py-2 px-4">
+                    <i class="fa-solid fa-shield-heart me-2"></i> Verify Database Integrity
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Backups history logs -->
+<div class="card shadow-sm border-0">
+    <div class="card-header bg-transparent border-0 pt-3">
+        <h5 class="fw-bold mb-0 text-dark"><i class="fa-solid fa-history me-2"></i> Successful ERP Backup Records</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Execution Time</th>
+                        <th>File Name</th>
+                        <th>Path</th>
+                        <th>Backup Size (KB)</th>
+                        <th>Created By</th>
+                        <th class="pe-3">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="backupHistoryBody">
+                    <tr>
+                        <td class="ps-3 text-muted">Just Now</td>
+                        <td><strong>erp_backup_initial.sqlite</strong></td>
+                        <td class="text-muted font-monospace">instance/backups/erp_backup_initial.sqlite</td>
+                        <td>48.0 KB</td>
+                        <td>admin</td>
+                        <td class="pe-3"><span class="badge bg-success">Successful</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.querySelectorAll(".sidebar-nav-link").forEach(el => el.classList.remove("active"));
+    document.getElementById("nav-backups").classList.add("active");
+</script>
+{% endblock %}
